@@ -78,24 +78,59 @@ Useful flags:
 pytest
 ```
 
-19 tests cover indicator correctness (including a no-lookahead check on
-pivots), signal logic, backtester mechanics (stop/target/sizing), and an
-end-to-end smoke test on synthetic data.
+33 tests cover indicator correctness (including a no-lookahead check on
+pivots), signal logic for all three strategy variants, backtester mechanics
+(stop/target/sizing), the metrics module, and an end-to-end smoke test on
+synthetic data.
 
-## Validating the strategy (next step)
+## Strategy variants
 
-Once real EUR/USD H1 data is in `data/raw/`, the honest next steps before
-trusting any result:
+- `strategy/pivot_macd_strategy.py` ("breakout") -- the original design:
+  MACD crosses while price is already on one side of PP. Its stop ends up
+  at the nearest pivot level, which is almost always the level just
+  crossed -- essentially no room, so it gets stopped out constantly.
+- `strategy/pivot_bounce_strategy.py` ("bounce", the CLI default) -- price
+  must touch a support/resistance level first, then a MACD crossover within
+  a confirmation window confirms the bounce. Stop/target sit one pivot step
+  beyond the touched level, giving the stop real room.
+- `strategy/macd_only_strategy.py` -- plain MACD crossover with an
+  ATR-based stop/target, no pivot dependency at all. Exists purely as a
+  baseline to check whether the pivot confluence adds anything over MACD by
+  itself.
 
-1. Compare against baselines: buy-and-hold, MACD-only (no pivot filter),
-   pivot-only (no MACD).
-2. Split into in-sample/out-of-sample (or walk-forward) periods -- don't
-   judge on the same data you tuned parameters against.
-3. Re-run on at least one more instrument/timeframe to check the edge isn't
-   curve-fit to EUR/USD H1 specifically.
+## Validation: does it actually work?
 
-The synthetic-data run used during development (`scripts/run_backtest.py`
-against a randomly generated series) is a plumbing check only -- it confirms
-the code runs end-to-end, not that the strategy has edge. Random-walk paths
-can look profitable to a trend-following signal by pure chance in a single
-run; that number is not evidence of anything.
+`scripts/validate.py` splits the data chronologically (default 70/30) and
+runs all three strategies plus a buy-and-hold baseline on each half
+independently, so a result has to hold up out-of-sample to mean anything:
+
+```bash
+python scripts/validate.py data/raw/EURUSD_1H_2020-2024.csv
+```
+
+Result on EUR/USD H1, 2020-01 to 2024-08 (in-sample = first ~3.25 years,
+out-of-sample = last ~1.4 years):
+
+| Strategy | In-sample PF | In-sample return | OOS PF | OOS return |
+|---|---|---|---|---|
+| buy & hold | -- | -2.7% | -- | +1.3% |
+| breakout | 0.68 | -77.3% | 0.58 | -58.3% |
+| bounce | 0.87 | -19.3% | 0.89 | -9.3% |
+| macd_only | 0.84 | -75.1% | 0.84 | -46.6% |
+
+**Conclusion: this rule family does not have edge on EUR/USD H1.** All three
+variants have profit factor < 1 in *both* independent periods -- not a
+one-off curve-fit result, a consistent negative expectancy. Buy-and-hold
+(literally doing nothing) beats every active variant by a wide margin in
+both windows. The bounce fix meaningfully reduced *how badly* the strategy
+loses (tighter drawdowns, better win rate) by giving stops real room, but
+it never crossed into positive expectancy, and the MACD-only baseline
+confirms the problem isn't specific to the pivot filter -- plain MACD
+crossover trading loses money here too.
+
+Before concluding "pivot + MACD can never work," the untested degrees of
+freedom that remain: other instruments/timeframes (this is EUR/USD H1
+only), a trend/regime filter (avoid trading MACD crossovers during chop,
+which is where most of the remaining losses concentrate), and walk-forward
+re-optimization rather than a single fixed parameter set. None of those
+have been tried yet.

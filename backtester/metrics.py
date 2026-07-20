@@ -12,8 +12,11 @@ def compute_metrics(trades: list, equity_curve: pd.Series, initial_capital: floa
     gross_loss = -sum(t.pnl for t in losses)
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.inf
 
-    total_pnl = sum(t.pnl for t in trades)
-    final_equity = initial_capital + total_pnl
+    # Derived from the equity curve itself, not summed trade PnL: a curve
+    # also reflects any position still open on the final bar (mark-to-market),
+    # and it's the only source of truth when there are no discrete trades at
+    # all (e.g. a buy-and-hold baseline).
+    final_equity = equity_curve.iloc[-1] if len(equity_curve) else initial_capital
     total_return = final_equity / initial_capital - 1
 
     returns = equity_curve.pct_change().dropna()
