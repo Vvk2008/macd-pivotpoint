@@ -43,7 +43,9 @@ def test_long_entry_on_macd_confirmation_after_support_touch():
     df = pd.DataFrame({"close": close}, index=idx)
     macd = _flat_macd(n, cross_at=3)
 
-    signals = generate_signals(df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, target_levels=1)
+    signals = generate_signals(
+        df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, target_levels=1, stop_levels=1
+    )
 
     assert signals["long_entry"].tolist() == [False, False, False, True, False, False]
     assert signals.loc[idx[3], "stop"] == 0.94  # one level below touched S1 -> S2

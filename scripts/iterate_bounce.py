@@ -29,13 +29,13 @@ def in_sample_only(df: pd.DataFrame) -> pd.DataFrame:
     return df[df.index < cutoff]
 
 
-def run_pair(pair: str, tolerance_pips=8.0, confirmation_window=5, macd_params=(12, 26, 9), **strategy_kwargs):
+def run_pair(pair: str, tolerance_pips=20.0, confirmation_window=3, macd_params=(12, 26, 9), pivot_period="W", **strategy_kwargs):
     df = load_ohlcv_csv(f"data/raw/{pair}.csv")
     df = in_sample_only(df)
     pip = infer_pip_size(df["close"])
 
     macd = compute_macd(df["close"], *macd_params)
-    pivots = compute_daily_pivots(df)
+    pivots = compute_daily_pivots(df, period=pivot_period)
     signals = generate_signals(
         df, macd, pivots, tolerance=tolerance_pips * pip, confirmation_window=confirmation_window, **strategy_kwargs
     )

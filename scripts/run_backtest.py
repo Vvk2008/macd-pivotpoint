@@ -28,32 +28,39 @@ def main():
     parser.add_argument(
         "--tolerance-pips",
         type=float,
-        default=8.0,
+        default=20.0,
         help="[bounce] how close (in pips) a close must be to a pivot level to count as a touch",
     )
     parser.add_argument(
         "--confirmation-window",
         type=int,
-        default=5,
+        default=3,
         help="[bounce] max bars between a pivot touch and the MACD crossover that confirms it",
     )
     parser.add_argument(
         "--stop-levels",
         type=int,
-        default=1,
+        default=2,
         help="[bounce] how many pivot steps beyond the touched level the stop sits",
     )
     parser.add_argument(
         "--target-levels",
         type=int,
-        default=3,
+        default=2,
         help="[bounce] how many pivot steps beyond the touched level the target sits",
+    )
+    parser.add_argument(
+        "--pivot-period",
+        default="W",
+        help="Pandas period alias for how often pivot levels recompute: 'D' (daily, resets every "
+        "session), 'W' (weekly, default -- a level persists for the whole following week), 'M' (monthly)",
     )
     parser.add_argument(
         "--session-start-hour",
         type=int,
         default=0,
-        help="UTC hour where the pivot trading day rolls over (0=midnight, 17=NY 5pm close)",
+        help="UTC hour where the pivot trading day rolls over (0=midnight, 17=NY 5pm close). Only "
+        "affects --pivot-period D.",
     )
     parser.add_argument("--macd-fast", type=int, default=12)
     parser.add_argument("--macd-slow", type=int, default=26)
@@ -67,7 +74,7 @@ def main():
     df = load_ohlcv_csv(args.csv_path)
     pip = infer_pip_size(df["close"])
     macd = compute_macd(df["close"], args.macd_fast, args.macd_slow, args.macd_signal)
-    pivots = compute_daily_pivots(df, session_start_hour=args.session_start_hour)
+    pivots = compute_daily_pivots(df, session_start_hour=args.session_start_hour, period=args.pivot_period)
 
     if args.strategy == "bounce":
         signals = generate_bounce_signals(

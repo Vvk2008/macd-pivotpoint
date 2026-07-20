@@ -52,7 +52,7 @@ def print_period(label, df, args, base_bt_kwargs):
     bt_kwargs = {**base_bt_kwargs, "spread": args.spread_pips * pip}
 
     macd = compute_macd(df["close"], args.macd_fast, args.macd_slow, args.macd_signal)
-    pivots = compute_daily_pivots(df, session_start_hour=args.session_start_hour)
+    pivots = compute_daily_pivots(df, session_start_hour=args.session_start_hour, period=args.pivot_period)
     atr = compute_atr(df)
 
     print(f"\n=== {label}  ({df.index[0]} -> {df.index[-1]}, {len(df)} bars, pip={pip}) ===")
@@ -97,14 +97,15 @@ def main():
         default=None,
         help="Use the last N years of data as out-of-sample instead of a bar-count fraction",
     )
-    parser.add_argument("--session-start-hour", type=int, default=0)
+    parser.add_argument("--pivot-period", default="W", help="'D', 'W' (default), or 'M' -- how often pivots recompute")
+    parser.add_argument("--session-start-hour", type=int, default=0, help="Only affects --pivot-period D")
     parser.add_argument("--macd-fast", type=int, default=12)
     parser.add_argument("--macd-slow", type=int, default=26)
     parser.add_argument("--macd-signal", type=int, default=9)
-    parser.add_argument("--tolerance-pips", type=float, default=8.0)
-    parser.add_argument("--confirmation-window", type=int, default=5)
-    parser.add_argument("--stop-levels", type=int, default=1)
-    parser.add_argument("--target-levels", type=int, default=3)
+    parser.add_argument("--tolerance-pips", type=float, default=20.0)
+    parser.add_argument("--confirmation-window", type=int, default=3)
+    parser.add_argument("--stop-levels", type=int, default=2)
+    parser.add_argument("--target-levels", type=int, default=2)
     parser.add_argument("--initial-capital", type=float, default=10_000)
     parser.add_argument("--risk-per-trade", type=float, default=0.01)
     parser.add_argument("--spread-pips", type=float, default=2.0, help="Round-trip spread cost in pips (default 2)")

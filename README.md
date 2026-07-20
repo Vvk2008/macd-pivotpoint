@@ -118,8 +118,8 @@ synthetic data.
 - `strategy/pivot_bounce_strategy.py` ("bounce", the CLI default) -- price
   must touch a support/resistance level first, then a MACD crossover within
   a confirmation window confirms the bounce. Stop sits `stop_levels` pivot
-  steps beyond the touched level (default 1); target sits `target_levels`
-  steps beyond it in the trade's direction (default 3, tuned -- see below).
+  steps beyond the touched level; target sits `target_levels` steps beyond
+  it in the trade's direction (both tuned -- see below).
 - `strategy/macd_only_strategy.py` -- plain MACD crossover with an
   ATR-based stop/target, no pivot dependency at all. Exists purely as a
   baseline to check whether the pivot confluence adds anything over MACD by
@@ -196,5 +196,53 @@ the tuned CLI defaults (not as part of the tuning loop): on EUR/USD it was
 PF 0.87 / -15.2% out-of-sample vs. PF 1.13 / +40.7% in-sample -- a real
 degradation, as expected for parameters tuned only on the in-sample window.
 The tuning loop deliberately never used this number to adjust anything
-further. A full 5-pair out-of-sample run has not been done; that's the
-natural next step to see whether the in-sample gains generalize at all.
+further.
+
+## Round 2: pivots that persist longer than a day (`--pivot-period`)
+
+`compute_daily_pivots` originally recomputed fresh levels every single
+session -- a support level that had been respected for a week would still
+vanish and get replaced at midnight, which doesn't match how S/R actually
+behaves. `period` (`'D'`/`'W'`/`'M'`, a pandas period alias) makes this
+configurable: `'W'` holds the *previous week's* pivots for the whole
+following week instead of recomputing daily; `'M'` does the same monthly.
+
+Tested the same way as before -- IS-only scorecard across all 5 pairs,
+kept only if the aggregate improved *and* survived excluding each pair's
+best trades:
+
+- **Weekly pivots** (`period='W'`) alone: aggregate PF 0.81(D) -> 0.99(D,
+  tuned) -> **1.01**, with drawdowns cut dramatically across every pair
+  (e.g. USD/JPY -36.5% -> -12.3%). Kept.
+- **Monthly pivots**: worse (aggregate PF 0.87, only 1/5 pairs positive) --
+  levels too coarse/stale for intraday touches. Discarded.
+- Re-tuned `tolerance_pips` (20, up from 8 -- wider levels need a wider
+  touch band), `confirmation_window` (back down to 3), `target_levels`
+  (down to 2) and `stop_levels` (up to 2) specifically for the weekly
+  regime, each kept only after passing the same top-N-trade-exclusion
+  robustness check as round 1.
+
+Final in-sample scorecard, all 5 pairs, H4, weekly pivots, ~11 years:
+
+| Pair | Trades | Win rate | PF | Return | PF (excl. best 5 trades) |
+|---|---|---|---|---|---|
+| EUR/USD | 424 | 44.6% | 1.41 | +26.6% | 1.30 |
+| GBP/USD | 407 | 41.3% | 1.22 | +14.0% | 1.11 |
+| USD/CAD | 452 | 36.3% | 1.01 | +1.0% | 0.93 |
+| USD/CHF | 492 | 35.0% | 0.93 | -6.3% | 0.85 |
+| USD/JPY | 463 | 37.1% | 1.06 | +4.5% | 0.91 |
+| **Aggregate** | | | **1.13** | **+7.9%** | |
+
+**4 of 5 pairs individually profitable in-sample** (up from 2/5), aggregate
+PF 1.13 with a genuinely positive average return, and every pair holds up
+gracefully after excluding its best 5 trades -- no collapse, unlike the
+wider-stop variant discarded in round 1. This is the strongest in-sample
+result so far. It is still an in-sample result: out-of-sample has not been
+re-checked since this round, and USD/CHF remains the weakest pair
+throughout every iteration of this project so far, on every timeframe and
+pivot period tried.
+
+CLI defaults (`run_backtest.py`, `validate.py`, `visualize.py`,
+`iterate_bounce.py`) now reflect this round: `--pivot-period W
+--tolerance-pips 20 --confirmation-window 3 --stop-levels 2
+--target-levels 2`.
