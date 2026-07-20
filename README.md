@@ -35,8 +35,31 @@ strategy/pivot_macd_strategy.py   entry/exit signal generation
 backtester/engine.py         event-driven, bar-by-bar backtest engine
 backtester/metrics.py        win rate, profit factor, Sharpe, CAGR, drawdown
 scripts/run_backtest.py      CLI entry point
+scripts/visualize.py         interactive HTML backtest visualizer
 tests/                       pytest unit + integration tests
 ```
+
+## Visualizing a backtest
+
+```bash
+python scripts/visualize.py data/raw/EURUSD240.csv --start 2023-01-01 --end 2023-04-01
+```
+
+Writes a self-contained HTML file (`<pair>_<strategy>.html`) with three
+linked panels -- panning/zooming one scrolls the others to match:
+
+- **Equity** -- full-history equity curve
+- **Drawdown %** -- full-history drawdown
+- **Price** -- candlesticks for the requested window (`--start`/`--end`, or
+  the last `--window-days` by default) over a thin full-history close-price
+  line, with pivot levels (PP solid, R1-R3/S1-S3 toggleable via the legend)
+  and trade markers: green/red triangles at long/short entries, X's at
+  win/loss exits, dashed connecting lines, hover text with entry/exit
+  price, exit reason, and P&L.
+
+`--strategy {bounce,macd_only,breakout}` and the same tolerance/window/
+level/MACD/risk flags as `run_backtest.py` select what gets backtested and
+plotted. Without `--start`/`--end` it defaults to the last 90 days of data.
 
 ## Data format
 
