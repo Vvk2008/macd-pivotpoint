@@ -11,8 +11,7 @@ from indicators.macd import compute_macd
 from indicators.pivot_points import compute_daily_pivots
 from strategy.pivot_macd_strategy import generate_signals as generate_breakout_signals
 from strategy.pivot_bounce_strategy import generate_signals as generate_bounce_signals
-
-PIP = 0.0001
+from utils import infer_pip_size
 
 
 def main():
@@ -49,17 +48,18 @@ def main():
     parser.add_argument("--macd-signal", type=int, default=9)
     parser.add_argument("--initial-capital", type=float, default=10_000)
     parser.add_argument("--risk-per-trade", type=float, default=0.01, help="Fraction of equity risked per trade")
-    parser.add_argument("--spread", type=float, default=0.0002, help="Round-trip spread cost in price units")
+    parser.add_argument("--spread-pips", type=float, default=2.0, help="Round-trip spread cost in pips")
     parser.add_argument("--commission", type=float, default=0.0, help="Fixed commission per closed trade")
     args = parser.parse_args()
 
     df = load_ohlcv_csv(args.csv_path)
+    pip = infer_pip_size(df["close"])
     macd = compute_macd(df["close"], args.macd_fast, args.macd_slow, args.macd_signal)
     pivots = compute_daily_pivots(df, session_start_hour=args.session_start_hour)
 
     if args.strategy == "bounce":
         signals = generate_bounce_signals(
-            df, macd, pivots, tolerance=args.tolerance_pips * PIP, confirmation_window=args.confirmation_window
+            df, macd, pivots, tolerance=args.tolerance_pips * pip, confirmation_window=args.confirmation_window
         )
     else:
         signals = generate_breakout_signals(df, macd, pivots)
@@ -67,7 +67,7 @@ def main():
     bt = Backtester(
         initial_capital=args.initial_capital,
         risk_per_trade=args.risk_per_trade,
-        spread=args.spread,
+        spread=args.spread_pips * pip,
         commission=args.commission,
     )
     result = bt.run(df, signals)

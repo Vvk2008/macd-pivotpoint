@@ -7,12 +7,27 @@ TIMESTAMP_ALIASES = ("timestamp", "datetime", "date", "time")
 def load_ohlcv_csv(path: str) -> pd.DataFrame:
     """Load an OHLCV CSV into a standardized DataFrame indexed by UTC timestamp.
 
-    Expects one timestamp-like column (timestamp/datetime/date/time) plus
-    open, high, low, close (case-insensitive). Volume is optional and
-    defaults to 0 if absent.
+    Handles two shapes, auto-detecting delimiter (comma/tab/etc.) either way:
+    - A header row naming a timestamp-like column (timestamp/datetime/date/
+      time) plus open/high/low/close (case-insensitive), volume optional.
+    - A headerless broker export (e.g. MT4/MT5 hourly dumps): 5 columns
+      (timestamp, open, high, low, close) or 6 (+ volume), in that order.
     """
-    df = pd.read_csv(path)
-    df.columns = [c.strip().lower() for c in df.columns]
+    first_cell = str(pd.read_csv(path, sep=None, engine="python", header=None, nrows=1).iloc[0, 0]).strip()
+    has_header = first_cell.lower() in TIMESTAMP_ALIASES or not _looks_like_timestamp(first_cell)
+
+    if has_header:
+        df = pd.read_csv(path, sep=None, engine="python")
+        df.columns = [c.strip().lower() for c in df.columns]
+    else:
+        df = pd.read_csv(path, sep=None, engine="python", header=None)
+        n_cols = df.shape[1]
+        if n_cols == 5:
+            df.columns = ["timestamp", "open", "high", "low", "close"]
+        elif n_cols == 6:
+            df.columns = ["timestamp", "open", "high", "low", "close", "volume"]
+        else:
+            raise ValueError(f"Headerless CSV with unexpected column count: {n_cols}")
 
     ts_col = next((c for c in TIMESTAMP_ALIASES if c in df.columns), None)
     if ts_col is None:
@@ -33,3 +48,11 @@ def load_ohlcv_csv(path: str) -> pd.DataFrame:
 
     df = df[~df.index.duplicated(keep="last")]
     return df[["open", "high", "low", "close", "volume"]].astype(float)
+
+
+def _looks_like_timestamp(value: str) -> bool:
+    try:
+        pd.Timestamp(value)
+        return True
+    except (ValueError, TypeError):
+        return False
