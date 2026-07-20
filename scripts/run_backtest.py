@@ -9,12 +9,35 @@ from backtester.metrics import compute_metrics
 from data.loader import load_ohlcv_csv
 from indicators.macd import compute_macd
 from indicators.pivot_points import compute_daily_pivots
-from strategy.pivot_macd_strategy import generate_signals
+from strategy.pivot_macd_strategy import generate_signals as generate_breakout_signals
+from strategy.pivot_bounce_strategy import generate_signals as generate_bounce_signals
+
+PIP = 0.0001
 
 
 def main():
     parser = argparse.ArgumentParser(description="Backtest the pivot-point + MACD strategy.")
     parser.add_argument("csv_path", help="Path to OHLCV CSV (timestamp, open, high, low, close[, volume])")
+    parser.add_argument(
+        "--strategy",
+        choices=["bounce", "breakout"],
+        default="bounce",
+        help="'bounce' = touch a support/resistance level, MACD confirms within a window (default). "
+        "'breakout' = MACD crosses while price is already on one side of PP (original, prone to "
+        "near-zero stop distances).",
+    )
+    parser.add_argument(
+        "--tolerance-pips",
+        type=float,
+        default=5.0,
+        help="[bounce] how close (in pips) a close must be to a pivot level to count as a touch",
+    )
+    parser.add_argument(
+        "--confirmation-window",
+        type=int,
+        default=3,
+        help="[bounce] max bars between a pivot touch and the MACD crossover that confirms it",
+    )
     parser.add_argument(
         "--session-start-hour",
         type=int,
@@ -33,7 +56,13 @@ def main():
     df = load_ohlcv_csv(args.csv_path)
     macd = compute_macd(df["close"], args.macd_fast, args.macd_slow, args.macd_signal)
     pivots = compute_daily_pivots(df, session_start_hour=args.session_start_hour)
-    signals = generate_signals(df, macd, pivots)
+
+    if args.strategy == "bounce":
+        signals = generate_bounce_signals(
+            df, macd, pivots, tolerance=args.tolerance_pips * PIP, confirmation_window=args.confirmation_window
+        )
+    else:
+        signals = generate_breakout_signals(df, macd, pivots)
 
     bt = Backtester(
         initial_capital=args.initial_capital,
@@ -44,6 +73,7 @@ def main():
     result = bt.run(df, signals)
     metrics = compute_metrics(result["trades"], result["equity_curve"], args.initial_capital)
 
+    print(f"Strategy:        {args.strategy}")
     print(f"Bars:            {len(df)}  ({df.index[0]} -> {df.index[-1]})")
     print(f"Trades:          {metrics['n_trades']}")
     print(f"Win rate:        {metrics['win_rate']:.1%}")
