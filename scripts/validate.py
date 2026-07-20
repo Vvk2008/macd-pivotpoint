@@ -55,7 +55,7 @@ def print_period(label, df, args, base_bt_kwargs):
     bh = buy_and_hold_metrics(df, args.initial_capital)
     print(f"{'buy&hold':<12}{'-':>8}{'-':>10}{'-':>8}{bh['total_return_pct']:>10.2f}{bh['max_drawdown_pct']:>10.2f}{bh['sharpe']:>9.2f}")
 
-    for name in ["breakout", "bounce", "macd_only"]:
+    for name in ["bounce", "macd_only"]:
         m = run_strategy(name, df, macd, pivots, atr, bt_kwargs, args.tolerance_pips * pip, args.confirmation_window)
         print(
             f"{name:<12}{m['n_trades']:>8}{m['win_rate']:>10.1%}{m['profit_factor']:>8.2f}"
@@ -65,7 +65,7 @@ def print_period(label, df, args, base_bt_kwargs):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Compare breakout/bounce/macd-only strategies against buy-and-hold, "
+        description="Compare bounce/macd-only strategies against buy-and-hold, "
         "split into in-sample and out-of-sample periods."
     )
     parser.add_argument("csv_path", help="Path to OHLCV CSV")
