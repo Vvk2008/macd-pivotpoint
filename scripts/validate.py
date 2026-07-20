@@ -19,9 +19,17 @@ from strategy.pivot_macd_strategy import generate_signals as generate_breakout_s
 from utils import infer_pip_size
 
 
-def run_strategy(name, df, macd, pivots, atr, bt_kwargs, tolerance, confirmation_window):
+def run_strategy(name, df, macd, pivots, atr, bt_kwargs, tolerance, confirmation_window, stop_levels, target_levels):
     if name == "bounce":
-        signals = generate_bounce_signals(df, macd, pivots, tolerance=tolerance, confirmation_window=confirmation_window)
+        signals = generate_bounce_signals(
+            df,
+            macd,
+            pivots,
+            tolerance=tolerance,
+            confirmation_window=confirmation_window,
+            stop_levels=stop_levels,
+            target_levels=target_levels,
+        )
     elif name == "breakout":
         signals = generate_breakout_signals(df, macd, pivots)
     elif name == "macd_only":
@@ -56,7 +64,18 @@ def print_period(label, df, args, base_bt_kwargs):
     print(f"{'buy&hold':<12}{'-':>8}{'-':>10}{'-':>8}{bh['total_return_pct']:>10.2f}{bh['max_drawdown_pct']:>10.2f}{bh['sharpe']:>9.2f}")
 
     for name in ["bounce", "macd_only"]:
-        m = run_strategy(name, df, macd, pivots, atr, bt_kwargs, args.tolerance_pips * pip, args.confirmation_window)
+        m = run_strategy(
+            name,
+            df,
+            macd,
+            pivots,
+            atr,
+            bt_kwargs,
+            args.tolerance_pips * pip,
+            args.confirmation_window,
+            args.stop_levels,
+            args.target_levels,
+        )
         print(
             f"{name:<12}{m['n_trades']:>8}{m['win_rate']:>10.1%}{m['profit_factor']:>8.2f}"
             f"{m['total_return_pct']:>10.2f}{m['max_drawdown_pct']:>10.2f}{m['sharpe']:>9.2f}"
@@ -82,8 +101,10 @@ def main():
     parser.add_argument("--macd-fast", type=int, default=12)
     parser.add_argument("--macd-slow", type=int, default=26)
     parser.add_argument("--macd-signal", type=int, default=9)
-    parser.add_argument("--tolerance-pips", type=float, default=5.0)
-    parser.add_argument("--confirmation-window", type=int, default=3)
+    parser.add_argument("--tolerance-pips", type=float, default=8.0)
+    parser.add_argument("--confirmation-window", type=int, default=5)
+    parser.add_argument("--stop-levels", type=int, default=1)
+    parser.add_argument("--target-levels", type=int, default=3)
     parser.add_argument("--initial-capital", type=float, default=10_000)
     parser.add_argument("--risk-per-trade", type=float, default=0.01)
     parser.add_argument("--spread-pips", type=float, default=2.0, help="Round-trip spread cost in pips (default 2)")

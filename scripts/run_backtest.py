@@ -28,14 +28,26 @@ def main():
     parser.add_argument(
         "--tolerance-pips",
         type=float,
-        default=5.0,
+        default=8.0,
         help="[bounce] how close (in pips) a close must be to a pivot level to count as a touch",
     )
     parser.add_argument(
         "--confirmation-window",
         type=int,
-        default=3,
+        default=5,
         help="[bounce] max bars between a pivot touch and the MACD crossover that confirms it",
+    )
+    parser.add_argument(
+        "--stop-levels",
+        type=int,
+        default=1,
+        help="[bounce] how many pivot steps beyond the touched level the stop sits",
+    )
+    parser.add_argument(
+        "--target-levels",
+        type=int,
+        default=3,
+        help="[bounce] how many pivot steps beyond the touched level the target sits",
     )
     parser.add_argument(
         "--session-start-hour",
@@ -59,7 +71,13 @@ def main():
 
     if args.strategy == "bounce":
         signals = generate_bounce_signals(
-            df, macd, pivots, tolerance=args.tolerance_pips * pip, confirmation_window=args.confirmation_window
+            df,
+            macd,
+            pivots,
+            tolerance=args.tolerance_pips * pip,
+            confirmation_window=args.confirmation_window,
+            stop_levels=args.stop_levels,
+            target_levels=args.target_levels,
         )
     else:
         signals = generate_breakout_signals(df, macd, pivots)

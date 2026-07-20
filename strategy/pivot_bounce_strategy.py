@@ -11,7 +11,10 @@ def generate_signals(
     macd: pd.DataFrame,
     pivots: pd.DataFrame,
     tolerance: float = 0.0005,
-    confirmation_window: int = 3,
+    confirmation_window: int = 5,
+    min_reward_risk: float = 0.0,
+    stop_levels: int = 1,
+    target_levels: int = 3,
 ) -> pd.DataFrame:
     """Pivot bounce, MACD-confirmed.
 
@@ -27,6 +30,17 @@ def generate_signals(
     *specific* level touched, one pivot step beyond it in each direction --
     e.g. touching S1 gives a stop at S2 and a target at PP -- so the stop
     always has real room instead of sitting at the level price just left.
+
+    `min_reward_risk` (0 = disabled) rejects an entry unless the realized
+    target distance from the actual entry price is at least this multiple
+    of the realized stop distance. Price can drift during the confirmation
+    window, so the distance actually available at entry is often smaller
+    than the nominal level-to-level spacing -- this filters out setups
+    where that drift has already made the reward:risk unfavorable.
+
+    `stop_levels`/`target_levels` control how many pivot steps beyond the
+    touched level the stop/target sit (default 1 each, the original
+    design).
     """
     close = df["close"]
     macd_line, signal_line = macd["macd"], macd["signal"]
@@ -37,8 +51,14 @@ def generate_signals(
     touched_resistance = _touch_level(close, pivots, RESISTANCE_LEVELS, tolerance)
 
     hold_bars = max(confirmation_window - 1, 0)
-    active_support = touched_support.ffill(limit=hold_bars)
-    active_resistance = touched_resistance.ffill(limit=hold_bars)
+    # pandas .ffill(limit=0) raises rather than treating 0 as a no-op, so
+    # confirmation_window=1 (same-bar-only confirmation) needs a bypass.
+    if hold_bars == 0:
+        active_support = touched_support
+        active_resistance = touched_resistance
+    else:
+        active_support = touched_support.ffill(limit=hold_bars)
+        active_resistance = touched_resistance.ffill(limit=hold_bars)
 
     long_entry = bull_cross & active_support.notna()
     short_entry = bear_cross & active_resistance.notna()
@@ -48,29 +68,35 @@ def generate_signals(
 
     for i in np.where(long_entry.to_numpy())[0]:
         idx = LEVELS.index(active_support.iloc[i])
-        if idx - 1 < 0:
-            long_entry.iloc[i] = False  # touched S3: no level below to use as a stop
+        if idx - stop_levels < 0 or idx + target_levels > len(LEVELS) - 1:
+            long_entry.iloc[i] = False  # not enough levels beyond to place stop/target
             continue
-        lvl_stop = pivots[LEVELS[idx - 1]].iloc[i]
-        lvl_target = pivots[LEVELS[idx + 1]].iloc[i]
+        lvl_stop = pivots[LEVELS[idx - stop_levels]].iloc[i]
+        lvl_target = pivots[LEVELS[idx + target_levels]].iloc[i]
         px = close.iloc[i]
         if not (lvl_stop < px < lvl_target):
             # price already ran past the target (or through the stop) during
             # the confirmation window, before the trade could even open
             long_entry.iloc[i] = False
             continue
+        if (lvl_target - px) < min_reward_risk * (px - lvl_stop):
+            long_entry.iloc[i] = False  # drift already made the R:R unfavorable
+            continue
         stop.iloc[i] = lvl_stop
         target.iloc[i] = lvl_target
 
     for i in np.where(short_entry.to_numpy())[0]:
         idx = LEVELS.index(active_resistance.iloc[i])
-        if idx + 1 > len(LEVELS) - 1:
-            short_entry.iloc[i] = False  # touched R3: no level above to use as a stop
+        if idx + stop_levels > len(LEVELS) - 1 or idx - target_levels < 0:
+            short_entry.iloc[i] = False  # not enough levels beyond to place stop/target
             continue
-        lvl_stop = pivots[LEVELS[idx + 1]].iloc[i]
-        lvl_target = pivots[LEVELS[idx - 1]].iloc[i]
+        lvl_stop = pivots[LEVELS[idx + stop_levels]].iloc[i]
+        lvl_target = pivots[LEVELS[idx - target_levels]].iloc[i]
         px = close.iloc[i]
         if not (lvl_target < px < lvl_stop):
+            short_entry.iloc[i] = False
+            continue
+        if (px - lvl_target) < min_reward_risk * (lvl_stop - px):
             short_entry.iloc[i] = False
             continue
         stop.iloc[i] = lvl_stop

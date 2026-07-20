@@ -88,60 +88,90 @@ synthetic data.
 - `strategy/pivot_macd_strategy.py` ("breakout") -- the original design:
   MACD crosses while price is already on one side of PP. Its stop ends up
   at the nearest pivot level, which is almost always the level just
-  crossed -- essentially no room, so it gets stopped out constantly.
+  crossed -- essentially no room, so it gets stopped out constantly. It's
+  been established as fundamentally broken regardless of timeframe or
+  tuning; the code stays for reference but `validate.py` and
+  `iterate_bounce.py` no longer run it.
 - `strategy/pivot_bounce_strategy.py` ("bounce", the CLI default) -- price
   must touch a support/resistance level first, then a MACD crossover within
-  a confirmation window confirms the bounce. Stop/target sit one pivot step
-  beyond the touched level, giving the stop real room.
+  a confirmation window confirms the bounce. Stop sits `stop_levels` pivot
+  steps beyond the touched level (default 1); target sits `target_levels`
+  steps beyond it in the trade's direction (default 3, tuned -- see below).
 - `strategy/macd_only_strategy.py` -- plain MACD crossover with an
   ATR-based stop/target, no pivot dependency at all. Exists purely as a
   baseline to check whether the pivot confluence adds anything over MACD by
   itself.
 
-## Validation: does it actually work?
+`Backtester` also blocks opening a new position on the same bar an existing
+one just closed (`block_same_bar_reversal`, default on) -- a signal exit and
+the opposite entry are often the same MACD crossover event, so without this
+a losing trade would immediately flip into another trade off no new
+information.
 
-`scripts/validate.py` splits the data chronologically and runs all three
-strategies plus a buy-and-hold baseline on each half independently, so a
-result has to hold up out-of-sample to mean anything. Use `--oos-years N`
-for a fixed-date cutoff (recommended when comparing multiple instruments
-with different bar counts) or `--split FRACTION` for a bar-count split:
+## Timeframe matters a lot: H1 vs H4
+
+The original validation (H1, all 5 pairs) found zero edge anywhere --
+every strategy, every pair, every period came back profit factor < 1.
+Resampling the exact same strategies to H4 data (`data/raw/*240.csv`)
+changed that materially: MACD's classic 12/26/9 was designed for daily
+charts, and H1 turned out to be too noisy for it. H4 is the timeframe
+everything below uses.
+
+## Tuning the bounce strategy (in-sample only)
+
+`scripts/iterate_bounce.py` is a scorecard harness used to tune the bounce
+strategy against the in-sample period only (everything before the last 5
+years) across all 5 H4 pairs at once -- deliberately never touching
+out-of-sample data while iterating, to avoid tuning into a leak:
 
 ```bash
-python scripts/validate.py data/raw/EURUSD60.csv --oos-years 5
+python scripts/iterate_bounce.py
 ```
 
-Result across all 5 pairs in `data/raw/` (hourly, 2010-07 to 2026-07,
-last 5 years held out as out-of-sample, ~11 years in-sample):
+Starting from the original 1-level stop/1-level target design (aggregate
+PF 0.81, avg return -16.9%), three changes were tested and kept because
+they held up under a robustness check (profit factor recomputed after
+excluding each pair's best 3 trades, to catch results that only look good
+because of one or two lucky outliers):
 
-| Pair | IS PF (breakout/bounce/macd) | OOS PF (breakout/bounce/macd) | OOS buy&hold |
-|---|---|---|---|
-| EUR/USD | 0.78 / 0.85 / 0.96 | 0.68 / 0.86 / 0.85 | -3.1% |
-| GBP/USD | 0.72 / 0.90 / 0.98 | 0.55 / 0.83 / 0.92 | -2.3% |
-| USD/CAD | 0.59 / 0.87 / 0.88 | 0.49 / 0.78 / 0.84 | +11.2% |
-| USD/CHF | 0.62 / 0.86 / 0.93 | 0.47 / 0.75 / 0.81 | -12.1% |
-| USD/JPY | 0.72 / 0.87 / 0.92 | 0.84 / 0.88 / 0.95 | +47.6% |
+1. **`target_levels=3`** instead of 1 -- target-hit rate was already
+   ~97-100%, so the fix was to let winners run further rather than filter
+   entries (a minimum reward:risk filter was tried first and made things
+   *worse* -- it disproportionately cut high-win-rate quick bounces).
+2. **`tolerance_pips=8`** instead of 5 -- slightly looser touch detection,
+   more trades, modest further improvement.
+3. **`confirmation_window=5`** instead of 3 -- more bars allowed between
+   the pivot touch and the MACD confirmation.
 
-**Conclusion: this rule family does not have edge, full stop.** 30 out of 30
-strategy/pair/period combinations (3 strategies x 5 pairs x 2 periods) came
-back with profit factor < 1. This isn't a single-instrument fluke or a
-curve-fit to one time window -- it's consistent across 5 different
-currency pairs and two independent multi-year periods (~11 years in-sample,
-5 years out-of-sample). Buy-and-hold, doing nothing, beats every active
-variant in every single case, sometimes by a wide margin (USD/JPY OOS:
-+47.6% doing nothing vs. -24.7% to -66.4% trading).
+A wider-stop variant (`stop_levels=2, target_levels=4`) looked even better
+headline-wise (aggregate PF 1.07) but failed the robustness check hard --
+removing the top 3 trades per pair dropped most pairs well below
+breakeven, meaning that result was a few lucky trades, not a real edge. It
+was discarded. A MACD-parameter sweep (faster/slower than 12/26/9) made
+things worse across the board and was also discarded.
 
-The ranking is consistent too: bounce > macd_only > breakout everywhere,
-confirming the fixes made earlier (real stop room, rejecting overshot
-entries) are real improvements -- they just aren't enough to flip a
-fundamentally negative-edge rule set into a positive one. `macd_only`
-losing as badly as it does (no pivot dependency at all) confirms the
-problem isn't specific to how pivots were used here; it's underlying
-whipsaw in the MACD crossover as an entry signal at this timeframe.
+Final in-sample scorecard, all 5 pairs, H4, ~11 years:
 
-What hasn't been tried: other timeframes (this is H1 only -- MACD crossover
-strategies are frequently pitched at H4/daily instead, where noise-to-signal
-is better), a trend/regime filter to skip choppy periods, and walk-forward
-re-optimization rather than one fixed parameter set across 16 years. Given
-how uniform the negative result already is across 5 pairs and 2 periods,
-though, the honest expectation is that these would soften the loss (as the
-bounce fix did) rather than produce a genuinely profitable system.
+| Pair | Trades | Win rate | PF | Return | PF (excl. best 3 trades) |
+|---|---|---|---|---|---|
+| EUR/USD | 644 | 45.5% | 1.13 | +40.7% | 1.09 |
+| GBP/USD | 604 | 46.0% | 1.11 | +27.5% | 1.06 |
+| USD/CAD | 716 | 42.7% | 0.90 | -24.1% | 0.85 |
+| USD/CHF | 715 | 41.4% | 0.90 | -26.0% | 0.83 |
+| USD/JPY | 682 | 43.3% | 0.92 | -19.1% | 0.85 |
+| **Aggregate** | | | **0.99** | **-0.2%** | |
+
+Up from PF 0.81 to 0.99 (essentially breakeven in aggregate) with large,
+consistent sample sizes and gains that survive removing the best few
+trades per pair -- 2 of 5 pairs individually clear PF 1.0, the other 3
+are close. This is real, in-sample-only progress, not a flip to
+demonstrated positive edge: 3 of 5 pairs are still net negative, and the
+aggregate is a rounding error from breakeven, not comfortably above it.
+
+**Out-of-sample was checked exactly once**, incidentally, while smoke-testing
+the tuned CLI defaults (not as part of the tuning loop): on EUR/USD it was
+PF 0.87 / -15.2% out-of-sample vs. PF 1.13 / +40.7% in-sample -- a real
+degradation, as expected for parameters tuned only on the in-sample window.
+The tuning loop deliberately never used this number to adjust anything
+further. A full 5-pair out-of-sample run has not been done; that's the
+natural next step to see whether the in-sample gains generalize at all.
