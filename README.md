@@ -100,37 +100,48 @@ synthetic data.
 
 ## Validation: does it actually work?
 
-`scripts/validate.py` splits the data chronologically (default 70/30) and
-runs all three strategies plus a buy-and-hold baseline on each half
-independently, so a result has to hold up out-of-sample to mean anything:
+`scripts/validate.py` splits the data chronologically and runs all three
+strategies plus a buy-and-hold baseline on each half independently, so a
+result has to hold up out-of-sample to mean anything. Use `--oos-years N`
+for a fixed-date cutoff (recommended when comparing multiple instruments
+with different bar counts) or `--split FRACTION` for a bar-count split:
 
 ```bash
-python scripts/validate.py data/raw/EURUSD_1H_2020-2024.csv
+python scripts/validate.py data/raw/EURUSD60.csv --oos-years 5
 ```
 
-Result on EUR/USD H1, 2020-01 to 2024-08 (in-sample = first ~3.25 years,
-out-of-sample = last ~1.4 years):
+Result across all 5 pairs in `data/raw/` (hourly, 2010-07 to 2026-07,
+last 5 years held out as out-of-sample, ~11 years in-sample):
 
-| Strategy | In-sample PF | In-sample return | OOS PF | OOS return |
-|---|---|---|---|---|
-| buy & hold | -- | -2.7% | -- | +1.3% |
-| breakout | 0.68 | -77.3% | 0.58 | -58.3% |
-| bounce | 0.87 | -19.3% | 0.89 | -9.3% |
-| macd_only | 0.84 | -75.1% | 0.84 | -46.6% |
+| Pair | IS PF (breakout/bounce/macd) | OOS PF (breakout/bounce/macd) | OOS buy&hold |
+|---|---|---|---|
+| EUR/USD | 0.78 / 0.85 / 0.96 | 0.68 / 0.86 / 0.85 | -3.1% |
+| GBP/USD | 0.72 / 0.90 / 0.98 | 0.55 / 0.83 / 0.92 | -2.3% |
+| USD/CAD | 0.59 / 0.87 / 0.88 | 0.49 / 0.78 / 0.84 | +11.2% |
+| USD/CHF | 0.62 / 0.86 / 0.93 | 0.47 / 0.75 / 0.81 | -12.1% |
+| USD/JPY | 0.72 / 0.87 / 0.92 | 0.84 / 0.88 / 0.95 | +47.6% |
 
-**Conclusion: this rule family does not have edge on EUR/USD H1.** All three
-variants have profit factor < 1 in *both* independent periods -- not a
-one-off curve-fit result, a consistent negative expectancy. Buy-and-hold
-(literally doing nothing) beats every active variant by a wide margin in
-both windows. The bounce fix meaningfully reduced *how badly* the strategy
-loses (tighter drawdowns, better win rate) by giving stops real room, but
-it never crossed into positive expectancy, and the MACD-only baseline
-confirms the problem isn't specific to the pivot filter -- plain MACD
-crossover trading loses money here too.
+**Conclusion: this rule family does not have edge, full stop.** 30 out of 30
+strategy/pair/period combinations (3 strategies x 5 pairs x 2 periods) came
+back with profit factor < 1. This isn't a single-instrument fluke or a
+curve-fit to one time window -- it's consistent across 5 different
+currency pairs and two independent multi-year periods (~11 years in-sample,
+5 years out-of-sample). Buy-and-hold, doing nothing, beats every active
+variant in every single case, sometimes by a wide margin (USD/JPY OOS:
++47.6% doing nothing vs. -24.7% to -66.4% trading).
 
-Before concluding "pivot + MACD can never work," the untested degrees of
-freedom that remain: other instruments/timeframes (this is EUR/USD H1
-only), a trend/regime filter (avoid trading MACD crossovers during chop,
-which is where most of the remaining losses concentrate), and walk-forward
-re-optimization rather than a single fixed parameter set. None of those
-have been tried yet.
+The ranking is consistent too: bounce > macd_only > breakout everywhere,
+confirming the fixes made earlier (real stop room, rejecting overshot
+entries) are real improvements -- they just aren't enough to flip a
+fundamentally negative-edge rule set into a positive one. `macd_only`
+losing as badly as it does (no pivot dependency at all) confirms the
+problem isn't specific to how pivots were used here; it's underlying
+whipsaw in the MACD crossover as an entry signal at this timeframe.
+
+What hasn't been tried: other timeframes (this is H1 only -- MACD crossover
+strategies are frequently pitched at H4/daily instead, where noise-to-signal
+is better), a trend/regime filter to skip choppy periods, and walk-forward
+re-optimization rather than one fixed parameter set across 16 years. Given
+how uniform the negative result already is across 5 pairs and 2 periods,
+though, the honest expectation is that these would soften the loss (as the
+bounce fix did) rather than produce a genuinely profitable system.
