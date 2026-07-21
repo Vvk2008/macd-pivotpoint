@@ -11,8 +11,8 @@ def generate_signals(
     macd: pd.DataFrame,
     pivots: pd.DataFrame,
     tolerance: float = 0.0005,
-    confirmation_window: int = 3,
-    min_reward_risk: float = 0.0,
+    confirmation_window: int = 2,
+    min_reward_risk: float = 0.5,
     stop_levels: int = 2,
     target_levels: int = 2,
 ) -> pd.DataFrame:

@@ -53,6 +53,7 @@ def build_signals(strategy, df, macd, pivots, atr, args, pip):
             confirmation_window=args.confirmation_window,
             stop_levels=args.stop_levels,
             target_levels=args.target_levels,
+            min_reward_risk=args.min_reward_risk,
         )
     if strategy == "macd_only":
         return generate_macd_only_signals(df, macd, atr)
@@ -213,10 +214,11 @@ def main():
     parser.add_argument("--macd-fast", type=int, default=12)
     parser.add_argument("--macd-slow", type=int, default=26)
     parser.add_argument("--macd-signal", type=int, default=9)
-    parser.add_argument("--tolerance-pips", type=float, default=20.0)
-    parser.add_argument("--confirmation-window", type=int, default=3)
+    parser.add_argument("--tolerance-pips", type=float, default=18.0)
+    parser.add_argument("--confirmation-window", type=int, default=2)
     parser.add_argument("--stop-levels", type=int, default=2)
     parser.add_argument("--target-levels", type=int, default=2)
+    parser.add_argument("--min-reward-risk", type=float, default=0.5, help="0 = disabled")
     parser.add_argument("--initial-capital", type=float, default=10_000)
     parser.add_argument("--risk-per-trade", type=float, default=0.01)
     parser.add_argument("--spread-pips", type=float, default=2.0)

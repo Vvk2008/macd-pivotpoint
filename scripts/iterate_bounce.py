@@ -29,7 +29,7 @@ def in_sample_only(df: pd.DataFrame) -> pd.DataFrame:
     return df[df.index < cutoff]
 
 
-def run_pair(pair: str, tolerance_pips=20.0, confirmation_window=3, macd_params=(12, 26, 9), pivot_period="W", **strategy_kwargs):
+def run_pair(pair: str, tolerance_pips=18.0, confirmation_window=2, macd_params=(12, 26, 9), pivot_period="W", **strategy_kwargs):
     df = load_ohlcv_csv(f"data/raw/{pair}.csv")
     df = in_sample_only(df)
     pip = infer_pip_size(df["close"])

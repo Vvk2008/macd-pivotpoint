@@ -28,13 +28,13 @@ def main():
     parser.add_argument(
         "--tolerance-pips",
         type=float,
-        default=20.0,
+        default=18.0,
         help="[bounce] how close (in pips) a close must be to a pivot level to count as a touch",
     )
     parser.add_argument(
         "--confirmation-window",
         type=int,
-        default=3,
+        default=2,
         help="[bounce] max bars between a pivot touch and the MACD crossover that confirms it",
     )
     parser.add_argument(
@@ -48,6 +48,13 @@ def main():
         type=int,
         default=2,
         help="[bounce] how many pivot steps beyond the touched level the target sits",
+    )
+    parser.add_argument(
+        "--min-reward-risk",
+        type=float,
+        default=0.5,
+        help="[bounce] reject an entry unless realized reward:risk at entry is at least this "
+        "multiple (0 = disabled)",
     )
     parser.add_argument(
         "--pivot-period",
@@ -85,6 +92,7 @@ def main():
             confirmation_window=args.confirmation_window,
             stop_levels=args.stop_levels,
             target_levels=args.target_levels,
+            min_reward_risk=args.min_reward_risk,
         )
     else:
         signals = generate_breakout_signals(df, macd, pivots)

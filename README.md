@@ -242,7 +242,60 @@ re-checked since this round, and USD/CHF remains the weakest pair
 throughout every iteration of this project so far, on every timeframe and
 pivot period tried.
 
+## Round 3: ablation study + out-of-sample-confirmed defaults
+
+`scripts/ablation.py` builds ~99 configs from the round-2 baseline: a
+single-factor variation of every existing knob (pivot period, tolerance,
+confirmation window, stop/target levels, `min_reward_risk`,
+`block_same_bar_reversal`, MACD params, spread cost, strategy family,
+session-hour filters) plus an interaction grid across the axes that
+matter most. In-sample only, ranked by aggregate PF with a robustness
+column (PF excluding each pair's best 3 trades, to catch results driven
+by a couple of lucky outliers rather than a real edge):
+
+```bash
+python scripts/ablation.py
+```
+
+**What actually matters, by impact:**
+1. **Pivot period, by far.** Every `pivot_period=D` config clusters at the
+   very bottom (PF 0.86-0.93, 0-1/5 pairs) no matter how else it's tuned.
+   Confirms round 2's core hypothesis was the single most important
+   decision in the whole strategy.
+2. **Strategy family, second.** `bounce` (1.13) clearly beats `macd_only`
+   (0.95, 0/5 pairs) and `breakout` (0.92, 2/5) -- the touch-then-confirm
+   mechanism itself is doing real work, not just "MACD" or "pivots" in
+   isolation.
+3. Everything else (tolerance, confirmation window, stop/target levels,
+   MACD period) is second-order, ~0.05-0.10 PF of range.
+4. Session filtering reconfirmed useless (all session-restricted configs
+   land below baseline, matching the dedicated session-analysis round).
+   Extreme `min_reward_risk` (>=1.5) or `stop/target_levels>=4` collapse
+   to near-zero trades.
+
+Three individually robustness-confirmed improvements over the round-2
+baseline -- `confirmation_window=2`, `tolerance_pips=18`,
+`min_reward_risk=0.5` (rejects an entry unless realized reward:risk at
+actual entry price is >= this multiple; drift during the confirmation
+window can erode a nominally-fine setup, same idea as the overshoot
+check from round 1, applied continuously instead of as a hard cutoff) --
+were combined and checked **in-sample and out-of-sample**:
+
+| | IS PF | IS pairs+ | OOS PF | OOS pairs+ | OOS PF (excl. best 3) |
+|---|---|---|---|---|---|
+| round-2 baseline | 1.13 | 4/5 | 1.12 | 4/5 (GBP/USD fails: 0.88) | 1.00 |
+| **round-3 candidate** | **1.17** | 3/5 | **1.17** | **5/5 -- all pairs** | **1.03** |
+
+The candidate fixes GBP/USD out-of-sample (0.88 -> 1.03, the one
+consistently-losing pair) while holding or improving every other pair --
+**first time in this project all 5 pairs are OOS-profitable
+simultaneously**. In-sample pairs-positive dips from 4/5 to 3/5 (USD/CAD,
+USD/CHF land just under 1.0 IS), but both of those pairs are *better*
+out-of-sample under the candidate than under the baseline, so this reads
+as in-sample noise rather than a real regression. Adopted as the new
+default.
+
 CLI defaults (`run_backtest.py`, `validate.py`, `visualize.py`,
 `iterate_bounce.py`) now reflect this round: `--pivot-period W
---tolerance-pips 20 --confirmation-window 3 --stop-levels 2
---target-levels 2`.
+--tolerance-pips 18 --confirmation-window 2 --stop-levels 2
+--target-levels 2 --min-reward-risk 0.5`.
