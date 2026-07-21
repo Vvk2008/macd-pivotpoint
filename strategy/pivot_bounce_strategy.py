@@ -116,6 +116,17 @@ def generate_signals(
         target.iloc[i] = lvl_target
 
     for i in np.where(short_entry.to_numpy())[0]:
+        if long_entry.iloc[i]:
+            # PP is both a support and resistance candidate, so a touch
+            # there can satisfy long_entry and short_entry on the same bar
+            # (most visible with require_macd_confirmation=False, where
+            # bull_cross/bear_cross no longer make the two mutually
+            # exclusive). Backtester.run() already prefers long when both
+            # are set on a bar; without this, the short loop below would
+            # silently overwrite the long loop's stop/target in the shared
+            # Series, corrupting the long trade with inverted levels.
+            short_entry.iloc[i] = False
+            continue
         idx = LEVELS.index(active_resistance.iloc[i])
         if idx + stop_levels > len(LEVELS) - 1 or idx - target_levels < 0:
             short_entry.iloc[i] = False  # not enough levels beyond to place stop/target

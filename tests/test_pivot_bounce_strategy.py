@@ -238,6 +238,28 @@ def test_use_signal_exit_false_disables_macd_exit():
     assert not without_exit["short_exit"].any()
 
 
+def test_pp_touch_does_not_corrupt_stop_target_when_both_sides_fire():
+    # PP is both a support and resistance candidate, so a touch there can
+    # satisfy long_entry AND short_entry on the same bar once entries no
+    # longer require a (mutually-exclusive) MACD cross. Backtester.run()
+    # prefers long when both fire on a bar -- the short loop must not
+    # clobber the long loop's stop/target in that case.
+    n = 2
+    idx = _index(n)
+    close = [1.02, 1.02]  # exactly at PP
+    df = pd.DataFrame({"close": close}, index=idx)
+    macd = _flat_macd(n, cross_at=10)  # irrelevant: confirmation is off
+
+    signals = generate_signals(
+        df, macd, _pivots(n), tolerance=0.003, min_reward_risk=0.0, require_macd_confirmation=False
+    )
+
+    assert signals["long_entry"].iloc[0]
+    assert not signals["short_entry"].iloc[0]  # long claims the bar first
+    assert signals.loc[idx[0], "stop"] == 0.94  # S2, two levels below PP -- correct long stop
+    assert signals.loc[idx[0], "target"] == 1.10  # R2, two levels above PP -- correct long target
+
+
 def test_no_crash_when_pivots_not_yet_available():
     # First trading day: pivots are all NaN until the prior day's H/L/C exists.
     n = 4

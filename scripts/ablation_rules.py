@@ -172,8 +172,37 @@ def pf_excl_top(trades, n):
     return gp / gl if gl > 0 else float("inf")
 
 
+def r_multiples(trades):
+    """Each trade's P&L normalized by the dollar amount actually risked on
+    it (size * stop distance) -- e.g. +2.0 means the trade won 2x what it
+    risked. Unlike raw $ PF, this is invariant to how much the account had
+    compounded by the time of that trade, so it isolates entry/exit *rule
+    quality* from pure position-sizing snowball effects. Position sizing
+    that compounds on current equity with no cap (as this backtester does)
+    can otherwise produce enormous, meaningless dollar returns once trade
+    count and edge combine over many years -- $ PF/return can look
+    spectacular even when the per-trade quality is only modestly better.
+    """
+    out = []
+    for t in trades:
+        risked = t.size * abs(t.entry_price - t.stop)
+        if risked > 0:
+            out.append(t.pnl / risked)
+    return out
+
+
+def r_pf(rs):
+    if not rs:
+        return float("nan")
+    gp = sum(r for r in rs if r > 0)
+    gl = -sum(r for r in rs if r <= 0)
+    return gp / gl if gl > 0 else float("inf")
+
+
 def run_config(cfg):
     pfs, rets, n_trades_total, excl3s = [], [], 0, []
+    all_r = []
+    per_pair_rpf = []
     for pair in PAIRS:
         df = get_df(pair)
         pip = infer_pip_size(df["close"])
@@ -208,6 +237,11 @@ def run_config(cfg):
         n_trades_total += m["n_trades"]
         excl3s.append(pf_excl_top(result["trades"], 3))
 
+        pair_r = r_multiples(result["trades"])
+        all_r.extend(pair_r)
+        pair_rpf = r_pf(pair_r)
+        per_pair_rpf.append(pair_rpf if np.isfinite(pair_rpf) else 0.0)
+
     n_pairs = len(PAIRS)
     return dict(
         agg_pf=float(np.mean(pfs)),
@@ -216,6 +250,9 @@ def run_config(cfg):
         n_pairs_positive=sum(1 for pf in pfs if pf >= 1.0),
         n_pairs=n_pairs,
         agg_pf_excl3=float(np.nanmean(excl3s)),
+        r_pf=r_pf(all_r),
+        r_pf_avg_pair=float(np.mean(per_pair_rpf)) if per_pair_rpf else float("nan"),
+        n_pairs_r_positive=sum(1 for x in per_pair_rpf if x >= 1.0),
     )
 
 
@@ -225,56 +262,58 @@ def main():
         r = run_config(cfg)
         rows.append({"label": label, "rule": rule_of[label], **r})
         print(
-            f"[{i}/{len(configs)}] {label:<55} PF={r['agg_pf']:.3f}  ret={r['agg_ret']:+7.2f}%  "
-            f"trades={r['n_trades']:6d}  pairs+={r['n_pairs_positive']}/{r['n_pairs']}  PFexT3={r['agg_pf_excl3']:.3f}",
+            f"[{i}/{len(configs)}] {label:<55} rPF={r['r_pf']:.3f}  $PF={r['agg_pf']:.3f}  "
+            f"trades={r['n_trades']:6d}  pairs+(r)={r['n_pairs_r_positive']}/{r['n_pairs']}",
             flush=True,
         )
 
-    df_results = pd.DataFrame(rows).sort_values("agg_pf", ascending=False).reset_index(drop=True)
+    df_results = pd.DataFrame(rows)
     df_results.to_csv("/tmp/ablation_rules_results.csv", index=False)
 
     print("\n\n" + "=" * 108)
-    print("RANKED RESULTS (highest to lowest aggregate PF)")
+    print("!! Dollar PF/return columns are DISTORTED by unbounded equity compounding: position")
+    print("!! size scales with current equity with no cap, so configs with more trades and any")
+    print("!! edge snowball into meaningless multi-million-percent returns over 11 years. The")
+    print("!! trustworthy, scale-invariant metric is rPF (profit factor of each trade's P&L")
+    print("!! normalized by what was actually risked on it -- pure trade quality, no compounding).")
     print("=" * 108)
-    print(f"{'rank':<5}{'label':<55}{'PF':>7}{'ret%':>9}{'trades':>9}{'pairs+':>9}{'PFexT3':>8}")
+    print("RANKED RESULTS (highest to lowest R-multiple PF -- the trustworthy metric)")
+    print("=" * 108)
+    ranked = df_results.sort_values("r_pf", ascending=False).reset_index(drop=True)
+    print(f"{'rank':<5}{'label':<55}{'rPF':>7}{'$PF':>8}{'trades':>9}{'pairs+(r)':>11}")
     print("-" * 108)
-    for i, row in df_results.iterrows():
-        pairs_str = f"{row['n_pairs_positive']}/{row['n_pairs']}"
-        print(
-            f"{i+1:<5}{row['label']:<55}{row['agg_pf']:>7.3f}{row['agg_ret']:>9.2f}"
-            f"{row['n_trades']:>9}{pairs_str:>9}{row['agg_pf_excl3']:>8.3f}"
-        )
+    for i, row in ranked.iterrows():
+        pairs_str = f"{row['n_pairs_r_positive']}/{row['n_pairs']}"
+        print(f"{i+1:<5}{row['label']:<55}{row['r_pf']:>7.3f}{row['agg_pf']:>8.3f}{row['n_trades']:>9}{pairs_str:>11}")
 
     baseline_row = df_results[df_results["label"] == "baseline (current production config)"].iloc[0]
 
     print("\n\n" + "=" * 108)
-    print("PER-RULE VERDICT (baseline PF = {:.3f}, PFexT3 = {:.3f})".format(
-        baseline_row["agg_pf"], baseline_row["agg_pf_excl3"]))
+    print("PER-RULE VERDICT (baseline rPF = {:.3f}, {} trades)".format(baseline_row["r_pf"], baseline_row["n_trades"]))
     print("=" * 108)
     for rule in df_results["rule"].unique():
         if rule in ("baseline", "combo"):
             continue
         sub = df_results[df_results["rule"] == rule]
-        best = sub.loc[sub["agg_pf"].idxmax()]
+        best = sub.loc[sub["r_pf"].idxmax()]
         off_rows = sub[sub["label"].str.contains("OFF")]
-        delta_pf = best["agg_pf"] - baseline_row["agg_pf"]
-        delta_robust = best["agg_pf_excl3"] - baseline_row["agg_pf_excl3"]
-        if delta_pf > 0.02 and delta_robust > 0.01:
+        delta = best["r_pf"] - baseline_row["r_pf"]
+        if delta > 0.02:
             verdict = "IMPROVES on baseline"
-        elif abs(delta_pf) <= 0.02 and abs(delta_robust) <= 0.01:
+        elif abs(delta) <= 0.02:
             verdict = "NEUTRAL -- unnecessary complexity if just this axis"
         else:
             verdict = "baseline setting is NECESSARY (variants worse)"
         print(f"\n[{rule}]")
-        print(f"  best variant: {best['label']:<50} PF={best['agg_pf']:.3f}  PFexT3={best['agg_pf_excl3']:.3f}  (delta {delta_pf:+.3f})")
+        print(f"  best variant: {best['label']:<50} rPF={best['r_pf']:.3f}  trades={best['n_trades']:6d}  (delta {delta:+.3f})")
         for _, r in off_rows.iterrows():
-            print(f"  OFF variant : {r['label']:<50} PF={r['agg_pf']:.3f}  PFexT3={r['agg_pf_excl3']:.3f}  (delta {r['agg_pf']-baseline_row['agg_pf']:+.3f})")
+            print(f"  OFF variant : {r['label']:<50} rPF={r['r_pf']:.3f}  trades={r['n_trades']:6d}  (delta {r['r_pf']-baseline_row['r_pf']:+.3f})")
         print(f"  VERDICT: {verdict}")
 
-    print("\n\n=== PILLAR-REMOVAL COMBOS ===")
+    print("\n\n=== PILLAR-REMOVAL COMBOS (by rPF) ===")
     combos = df_results[df_results["rule"] == "combo"]
-    for _, r in combos.sort_values("agg_pf", ascending=False).iterrows():
-        print(f"  {r['label']:<55} PF={r['agg_pf']:.3f}  ret={r['agg_ret']:+7.2f}%  pairs+={r['n_pairs_positive']}/{r['n_pairs']}  PFexT3={r['agg_pf_excl3']:.3f}")
+    for _, r in combos.sort_values("r_pf", ascending=False).iterrows():
+        print(f"  {r['label']:<55} rPF={r['r_pf']:.3f}  $PF={r['agg_pf']:.3f}  trades={r['n_trades']:6d}  pairs+(r)={r['n_pairs_r_positive']}/{r['n_pairs']}")
 
 
 if __name__ == "__main__":
