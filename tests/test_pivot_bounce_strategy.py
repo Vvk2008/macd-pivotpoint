@@ -160,6 +160,84 @@ def test_confirmation_window_of_one_allows_same_bar_cross():
     assert signals["long_entry"].tolist() == [False, True, False, False]
 
 
+def test_require_touch_false_ignores_location_gate():
+    n = 5
+    idx = _index(n)
+    # 1.03 is 1 cent from PP (1.02) -- outside a 0.003 tolerance, so never
+    # "touched" under the normal gate, but still resolves to a nearest
+    # level (PP) when the gate is off.
+    close = [1.03, 1.03, 1.03, 1.03, 1.03]
+    df = pd.DataFrame({"close": close}, index=idx)
+    macd = _flat_macd(n, cross_at=2)
+
+    gated = generate_signals(df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, require_touch=True)
+    ungated = generate_signals(df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, require_touch=False)
+
+    assert not gated["long_entry"].any()
+    assert ungated["long_entry"].tolist() == [False, False, True, False, False]
+
+
+def test_require_macd_confirmation_false_fires_on_touch_alone():
+    n = 4
+    idx = _index(n)
+    close = [1.05, 0.981, 1.00, 1.00]  # bar 0 touches nothing; bar 1 touches S1
+    df = pd.DataFrame({"close": close}, index=idx)
+    macd = _flat_macd(n, cross_at=10)  # MACD never actually crosses within range
+
+    confirmed = generate_signals(
+        df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, require_macd_confirmation=True
+    )
+    unconfirmed = generate_signals(
+        df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, require_macd_confirmation=False
+    )
+
+    assert not confirmed["long_entry"].any()
+    assert unconfirmed["long_entry"].tolist() == [False, True, False, False]
+
+
+def test_require_no_overshoot_false_allows_entry_past_stop():
+    n = 4
+    idx = _index(n)
+    # Bar 1 touches S1 (0.98); by the confirmation bar, price has already
+    # dropped *through* the would-be stop (S2=0.94) rather than past the
+    # target -- this keeps the realized reward positive, so the R:R filter
+    # (independent of the overshoot check) doesn't also reject it.
+    close = [1.05, 0.981, 0.93, 0.93]
+    df = pd.DataFrame({"close": close}, index=idx)
+    macd = _flat_macd(n, cross_at=3)
+
+    checked = generate_signals(
+        df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, stop_levels=1, target_levels=1,
+        min_reward_risk=0.0, require_no_overshoot=True,
+    )
+    unchecked = generate_signals(
+        df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, stop_levels=1, target_levels=1,
+        min_reward_risk=0.0, require_no_overshoot=False,
+    )
+
+    assert not checked["long_entry"].any()
+    assert unchecked["long_entry"].tolist() == [False, False, False, True]
+
+
+def test_use_signal_exit_false_disables_macd_exit():
+    n = 5
+    idx = _index(n)
+    close = [1.00] * n
+    df = pd.DataFrame({"close": close}, index=idx)
+    # MACD crosses bullish at bar 1 then bearish at bar 3 (a long_exit event).
+    macd_vals = [-0.1, 0.1, 0.1, -0.1, -0.1]
+    signal_vals = [0.0, 0.0, 0.0, 0.0, 0.0]
+    macd = pd.DataFrame({"macd": macd_vals, "signal": signal_vals}, index=idx)
+    macd["hist"] = macd["macd"] - macd["signal"]
+
+    with_exit = generate_signals(df, macd, _pivots(n), use_signal_exit=True)
+    without_exit = generate_signals(df, macd, _pivots(n), use_signal_exit=False)
+
+    assert with_exit["long_exit"].iloc[3]
+    assert not without_exit["long_exit"].any()
+    assert not without_exit["short_exit"].any()
+
+
 def test_no_crash_when_pivots_not_yet_available():
     # First trading day: pivots are all NaN until the prior day's H/L/C exists.
     n = 4

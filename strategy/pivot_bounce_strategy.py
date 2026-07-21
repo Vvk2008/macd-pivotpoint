@@ -15,6 +15,10 @@ def generate_signals(
     min_reward_risk: float = 0.5,
     stop_levels: int = 2,
     target_levels: int = 2,
+    require_touch: bool = True,
+    require_macd_confirmation: bool = True,
+    require_no_overshoot: bool = True,
+    use_signal_exit: bool = True,
 ) -> pd.DataFrame:
     """Pivot bounce, MACD-confirmed.
 
@@ -41,14 +45,33 @@ def generate_signals(
     `stop_levels`/`target_levels` control how many pivot steps beyond the
     touched level the stop/target sit (default 1 each, the original
     design).
+
+    Four rule toggles, all on by default (matching the strategy's normal
+    behavior exactly):
+    - `require_touch`: if False, skip the tolerance-gated location check --
+      every bar anchors to its nearest pivot level regardless of distance
+      (stop/target still pivot-anchored, just without the "must actually be
+      near a level" gate).
+    - `require_macd_confirmation`: if False, entry fires on the touch event
+      itself, no crossover needed (pure pivot mean-reversion).
+      `confirmation_window` is ignored in this mode.
+    - `require_no_overshoot`: if False, skips the check that price is still
+      between stop and target at entry (reproduces the original overshoot
+      bug on demand, for controlled comparison).
+    - `use_signal_exit`: if False, positions can only close via stop or
+      target, never the opposite MACD crossover.
     """
     close = df["close"]
     macd_line, signal_line = macd["macd"], macd["signal"]
     bull_cross = (macd_line > signal_line) & (macd_line.shift(1) <= signal_line.shift(1))
     bear_cross = (macd_line < signal_line) & (macd_line.shift(1) >= signal_line.shift(1))
 
-    touched_support = _touch_level(close, pivots, SUPPORT_LEVELS, tolerance)
-    touched_resistance = _touch_level(close, pivots, RESISTANCE_LEVELS, tolerance)
+    if require_touch:
+        touched_support = _touch_level(close, pivots, SUPPORT_LEVELS, tolerance)
+        touched_resistance = _touch_level(close, pivots, RESISTANCE_LEVELS, tolerance)
+    else:
+        touched_support = _nearest_level(close, pivots, SUPPORT_LEVELS)
+        touched_resistance = _nearest_level(close, pivots, RESISTANCE_LEVELS)
 
     hold_bars = max(confirmation_window - 1, 0)
     # pandas .ffill(limit=0) raises rather than treating 0 as a no-op, so
@@ -60,8 +83,15 @@ def generate_signals(
         active_support = touched_support.ffill(limit=hold_bars)
         active_resistance = touched_resistance.ffill(limit=hold_bars)
 
-    long_entry = bull_cross & active_support.notna()
-    short_entry = bear_cross & active_resistance.notna()
+    if require_macd_confirmation:
+        long_entry = bull_cross & active_support.notna()
+        short_entry = bear_cross & active_resistance.notna()
+    else:
+        # No momentum filter: fire directly on the touch event (not the
+        # confirmation-window-extended `active_*`, which would otherwise
+        # re-fire the same setup on every bar the touch stays "active").
+        long_entry = touched_support.notna()
+        short_entry = touched_resistance.notna()
 
     stop = pd.Series(np.nan, index=df.index)
     target = pd.Series(np.nan, index=df.index)
@@ -74,7 +104,7 @@ def generate_signals(
         lvl_stop = pivots[LEVELS[idx - stop_levels]].iloc[i]
         lvl_target = pivots[LEVELS[idx + target_levels]].iloc[i]
         px = close.iloc[i]
-        if not (lvl_stop < px < lvl_target):
+        if require_no_overshoot and not (lvl_stop < px < lvl_target):
             # price already ran past the target (or through the stop) during
             # the confirmation window, before the trade could even open
             long_entry.iloc[i] = False
@@ -93,7 +123,7 @@ def generate_signals(
         lvl_stop = pivots[LEVELS[idx + stop_levels]].iloc[i]
         lvl_target = pivots[LEVELS[idx - target_levels]].iloc[i]
         px = close.iloc[i]
-        if not (lvl_target < px < lvl_stop):
+        if require_no_overshoot and not (lvl_target < px < lvl_stop):
             short_entry.iloc[i] = False
             continue
         if (px - lvl_target) < min_reward_risk * (lvl_stop - px):
@@ -105,8 +135,8 @@ def generate_signals(
     out = pd.DataFrame(index=df.index)
     out["long_entry"] = long_entry
     out["short_entry"] = short_entry
-    out["long_exit"] = bear_cross
-    out["short_exit"] = bull_cross
+    out["long_exit"] = bear_cross if use_signal_exit else pd.Series(False, index=df.index)
+    out["short_exit"] = bull_cross if use_signal_exit else pd.Series(False, index=df.index)
     out["stop"] = stop
     out["target"] = target
     return out
@@ -123,3 +153,15 @@ def _touch_level(close: pd.Series, pivots: pd.DataFrame, candidate_levels: list,
     nearest_level = diffs.idxmin(axis=1)
     nearest_dist = diffs.min(axis=1)
     return nearest_level.where(valid & (nearest_dist <= tolerance))
+
+
+def _nearest_level(close: pd.Series, pivots: pd.DataFrame, candidate_levels: list) -> pd.Series:
+    """Nearest candidate level to each bar's close, unconditionally (no
+    distance cutoff) -- used when `require_touch=False` so a level is
+    always available to anchor stop/target, without gating on location.
+    """
+    levels = pivots[candidate_levels]
+    valid = pivots["PP"].notna()
+    diffs = levels.sub(close, axis=0).abs().fillna(np.inf)
+    nearest_level = diffs.idxmin(axis=1)
+    return nearest_level.where(valid)
