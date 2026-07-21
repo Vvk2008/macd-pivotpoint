@@ -299,3 +299,85 @@ CLI defaults (`run_backtest.py`, `validate.py`, `visualize.py`,
 `iterate_bounce.py`) now reflect this round: `--pivot-period W
 --tolerance-pips 18 --confirmation-window 2 --stop-levels 2
 --target-levels 2 --min-reward-risk 0.5`.
+
+## Round 4: does every rule earn its complexity? (28 pairs, in-sample only)
+
+Round 3 varied hyperparameter *values* for rules that were always
+structurally present. Round 4 asks a different question: does each rule
+matter *at all*, versus trading with it switched off entirely? Four new
+boolean flags were added to `generate_signals` (`require_touch`,
+`require_macd_confirmation`, `require_no_overshoot`, `use_signal_exit`,
+all default `True`, byte-identical behavior to before when left alone),
+and `scripts/ablation_rules.py` builds 40 configs across 9 rule axes plus
+pillar-removal combos, run on **all 28 pairs**, in-sample only:
+
+```bash
+python scripts/ablation_rules.py
+```
+
+Ranked by R-multiple PF (`rPF` -- each trade's P&L normalized by dollars
+risked; scale-invariant, unlike raw dollar PF/return which is distorted
+by unbounded equity compounding over an 11-year backtest).
+
+**Headline finding: on the full 28-pair universe, almost every rule is
+statistically neutral.** rPF sits in a tight 0.86-1.03 band across nearly
+all 40 configs -- no rule combination produces a real edge, and removing
+most individual rules barely moves the result. Baseline (current
+production config) ranks 11th of 40, rPF 0.999 -- essentially breakeven,
+consistent with the 28-pair portfolio backtest result below.
+
+**Per-rule verdicts -- 9 of 10 rules are NEUTRAL** (removing them doesn't
+materially hurt, and sometimes helps slightly): touch/location gate, MACD
+confirmation, confirmation window, stop buffer, target buffer,
+reward:risk filter, overshoot check, signal exit, same-bar-reversal
+block. **Only `pivot_period=W` is NECESSARY** -- daily collapses to rPF
+0.909 (4/28 pairs profitable) and monthly to 0.950 (13/28), reconfirming
+weekly pivots as the one lever that actually matters, this time across
+all 28 pairs rather than just the 5 majors.
+
+One inconsistent result worth flagging rather than hiding: `signal_exit:
+OFF` (stop/target only, no MACD-cross exit) ranks near the top on the
+full 11-year run (rPF 1.018-1.028 across several configs, 3,300+ trades)
+-- but the same flag was the single worst result in a dedicated
+2014-2015-only re-run of this ablation (rPF 0.845, on a comparable
+566-trade sample). This flip suggests `signal_exit`'s value is
+regime-dependent rather than a stable property of the strategy, and
+should not be treated as a settled improvement in either direction.
+
+**Conclusion: there is no rule tweak within this framework that rescues
+the 28-pair result.** The structure is already near its ceiling given
+weekly pivots; the gap between the 5 majors (OOS PF 1.17) and the 23
+crosses (OOS PF 0.88) is not a rule-tuning problem. See the 28-pair
+portfolio backtest below for what actually moves the outcome.
+
+## 28-pair single shared-account portfolio backtest (in-sample only)
+
+`scripts/portfolio_backtest_28.py` runs all 28 pairs through one shared
+$10,000 account (1% risk per trade, position sizing off live total
+equity across all open positions), in-sample only:
+
+```bash
+python scripts/portfolio_backtest_28.py
+```
+
+Result: 10,044 trades, 35.2% win rate, PF 0.99, **-17.86% total return**,
+max drawdown **-49.62%**, Sharpe ~0.00, $10,000 -> $8,214. 14 of 28 pairs
+contributed positively, 14 negatively -- winners are almost entirely the
+original 5 majors plus a handful of crosses (EUR/USD +$2,282, GBP/USD
++$1,148, CHF/JPY +$746); losers are almost entirely the newer crosses
+(CAD/JPY -$1,781, EUR/CHF -$1,521, EUR/AUD -$810).
+
+Two compounding causes, both already established earlier in this
+project: (1) params tuned on the 5 majors don't generalize to the 23
+crosses (OOS PF 1.17 vs 0.88), and (2) a shared account amplifies
+correlated risk-taking -- the same 5 majors returned +79.8% in a shared
+account vs +13-29% as summed independent accounts, and pairs' USD
+direction agrees 71% of the time when 2+ positions are open
+simultaneously (vs ~50% expected if independent), so "28 pairs" isn't 28
+independent bets when several open at once.
+
+Round 4's ablation confirms this isn't fixable by further rule-tuning.
+Next steps worth testing: restrict the pair universe to pairs with
+standalone IS edge rather than trading all 28, and cap aggregate open
+risk across simultaneously-open positions rather than only capping
+risk per trade.
