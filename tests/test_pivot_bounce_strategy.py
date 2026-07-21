@@ -43,7 +43,10 @@ def test_long_entry_on_macd_confirmation_after_support_touch():
     df = pd.DataFrame({"close": close}, index=idx)
     macd = _flat_macd(n, cross_at=3)
 
-    signals = generate_signals(df, macd, _pivots(n), tolerance=0.003, confirmation_window=3)
+    signals = generate_signals(
+        df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, target_levels=1, stop_levels=1,
+        min_reward_risk=0.0,
+    )
 
     assert signals["long_entry"].tolist() == [False, False, False, True, False, False]
     assert signals.loc[idx[3], "stop"] == 0.94  # one level below touched S1 -> S2
@@ -86,6 +89,35 @@ def test_no_trade_when_touched_level_has_no_room_beyond_it():
     assert not signals["long_entry"].any()
 
 
+def test_min_reward_risk_rejects_unfavorable_realized_distance():
+    n = 6
+    idx = _index(n)
+    # Same setup as the basic confirmation test: entry at px=1.00, stop=S2=0.94
+    # (risk 0.06), target=PP=1.02 (reward 0.02) -> R:R = 0.33, well under 1.0.
+    close = [1.02, 0.981, 1.00, 1.00, 1.00, 1.00]
+    df = pd.DataFrame({"close": close}, index=idx)
+    macd = _flat_macd(n, cross_at=3)
+
+    signals = generate_signals(
+        df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, min_reward_risk=1.0, target_levels=1
+    )
+
+    assert not signals["long_entry"].any()
+
+
+def test_min_reward_risk_allows_favorable_realized_distance():
+    n = 6
+    idx = _index(n)
+    close = [1.02, 0.981, 1.00, 1.00, 1.00, 1.00]
+    df = pd.DataFrame({"close": close}, index=idx)
+    macd = _flat_macd(n, cross_at=3)
+
+    # min_reward_risk below the actual 0.33 ratio should still allow the trade.
+    signals = generate_signals(df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, min_reward_risk=0.2)
+
+    assert signals["long_entry"].tolist() == [False, False, False, True, False, False]
+
+
 def test_no_entry_when_price_already_overshot_target_before_confirmation():
     n = 5
     idx = _index(n)
@@ -96,9 +128,36 @@ def test_no_entry_when_price_already_overshot_target_before_confirmation():
     df = pd.DataFrame({"close": close}, index=idx)
     macd = _flat_macd(n, cross_at=3)
 
-    signals = generate_signals(df, macd, _pivots(n), tolerance=0.003, confirmation_window=3)
+    signals = generate_signals(df, macd, _pivots(n), tolerance=0.003, confirmation_window=3, target_levels=1)
 
     assert not signals["long_entry"].any()
+
+
+def test_confirmation_window_of_one_requires_same_bar_cross():
+    n = 5
+    idx = _index(n)
+    # Touch happens at bar 1; MACD confirms one bar later at bar 2 --
+    # with confirmation_window=1, that's too late (must be the same bar).
+    close = [1.02, 0.981, 1.00, 1.00, 1.00]
+    df = pd.DataFrame({"close": close}, index=idx)
+    macd = _flat_macd(n, cross_at=2)
+
+    signals = generate_signals(df, macd, _pivots(n), tolerance=0.003, confirmation_window=1)
+
+    assert not signals["long_entry"].any()
+
+
+def test_confirmation_window_of_one_allows_same_bar_cross():
+    n = 4
+    idx = _index(n)
+    # Touch and MACD cross both land on bar 1.
+    close = [1.02, 0.981, 1.00, 1.00]
+    df = pd.DataFrame({"close": close}, index=idx)
+    macd = _flat_macd(n, cross_at=1)
+
+    signals = generate_signals(df, macd, _pivots(n), tolerance=0.003, confirmation_window=1)
+
+    assert signals["long_entry"].tolist() == [False, True, False, False]
 
 
 def test_no_crash_when_pivots_not_yet_available():

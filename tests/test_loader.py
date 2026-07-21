@@ -28,3 +28,27 @@ def test_load_ohlcv_csv_defaults_missing_volume(tmp_path):
     csv_path.write_text("date,open,high,low,close\n2024-01-01,1.1,1.2,1.05,1.15\n")
     df = load_ohlcv_csv(str(csv_path))
     assert (df["volume"] == 0.0).all()
+
+
+def test_load_headerless_tab_delimited_broker_export(tmp_path):
+    csv_path = tmp_path / "broker.csv"
+    csv_path.write_text(
+        "2010-07-06 10:00\t1.25843\t1.25987\t1.25683\t1.25787\t3634\r\n"
+        "2010-07-06 11:00\t1.25776\t1.25819\t1.25647\t1.25742\t3315\r\n"
+    )
+    df = load_ohlcv_csv(str(csv_path))
+    assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+    assert len(df) == 2
+    assert df["volume"].iloc[0] == 3634
+    assert df.index.tz is not None
+
+
+def test_load_headerless_five_column_broker_export(tmp_path):
+    csv_path = tmp_path / "broker_novolume.csv"
+    csv_path.write_text(
+        "2010-07-06 10:00\t1.25843\t1.25987\t1.25683\t1.25787\n"
+        "2010-07-06 11:00\t1.25776\t1.25819\t1.25647\t1.25742\n"
+    )
+    df = load_ohlcv_csv(str(csv_path))
+    assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+    assert (df["volume"] == 0.0).all()

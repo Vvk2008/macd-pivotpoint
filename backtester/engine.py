@@ -40,11 +40,13 @@ class Backtester:
         risk_per_trade: float = 0.01,
         spread: float = 0.0002,
         commission: float = 0.0,
+        block_same_bar_reversal: bool = True,
     ):
         self.initial_capital = initial_capital
         self.risk_per_trade = risk_per_trade
         self.spread = spread
         self.commission = commission
+        self.block_same_bar_reversal = block_same_bar_reversal
 
     def run(self, df: pd.DataFrame, signals: pd.DataFrame) -> dict:
         equity = self.initial_capital
@@ -54,6 +56,7 @@ class Backtester:
 
         for t, bar in df.iterrows():
             sig = signals.loc[t]
+            just_closed = False
 
             if position is not None:
                 exit_price, reason = self._check_exit(position, bar, sig)
@@ -62,8 +65,14 @@ class Backtester:
                     equity += position.pnl - self.commission
                     trades.append(position)
                     position = None
+                    just_closed = True
 
-            if position is None:
+            # A signal exit and the opposite-direction entry are often the
+            # *same* crossover event -- closing a long and opening a short
+            # off one bar's bear-cross, with no fresh setup in between.
+            # Blocking same-bar reversal forces a genuinely new signal
+            # before re-entering.
+            if position is None and not (just_closed and self.block_same_bar_reversal):
                 if bool(sig["long_entry"]) and not np.isnan(sig["stop"]):
                     position = self._open(t, bar, "long", sig, equity)
                 elif bool(sig["short_entry"]) and not np.isnan(sig["stop"]):
