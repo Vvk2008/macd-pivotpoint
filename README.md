@@ -381,3 +381,75 @@ Next steps worth testing: restrict the pair universe to pairs with
 standalone IS edge rather than trading all 28, and cap aggregate open
 risk across simultaneously-open positions rather than only capping
 risk per trade.
+
+## The pair-selection trap: an out-of-sample honesty check
+
+An obvious idea after the 28-pair result is "just keep the 14 pairs that
+were IS-profitable." That is textbook selection bias -- with 28 pairs,
+several will look profitable on in-sample data by luck alone, and picking
+the winners *after* seeing their IS results and then re-quoting IS
+performance double-counts that luck. The only honest test is to freeze the
+selection on IS and evaluate it ONCE on the untouched OOS window
+(`scripts/portfolio_backtest_14_oos.py`):
+
+Running the 14 IS-positive pairs on OOS (shared account, 1% risk):
+PF 0.87, **-40.86% return**, max drawdown -46.33%, and **only 7 of the 14
+stayed positive** -- a coin flip. Five crosses that looked fine IS
+(CHF/JPY, NZD/CAD, NZD/CHF, EUR/NZD, EUR/JPY) accounted for almost the
+entire OOS loss. The IS pair selection was largely survivorship noise, not
+edge. The only pairs that hold up across *both* windows are the USD majors
+that were tuned and validated in the first place.
+
+## Round 5: genetic-algorithm parameter search + overfitting harness
+
+Would searching parameters with a GA -- far more thoroughly than the
+hand-tuning of round 3 -- find a profitable configuration, and how do you
+run that search *without* overfitting? A GA is by construction an
+overfitting maximiser (its whole job is to find the vector that scores
+best on the data shown), so the GA alone is not the answer; the harness
+around it is (`scripts/ga_optimize.py`):
+
+- **Three chronological windows**, never shuffled: IS-train -> IS-validation
+  -> OOS. The GA only evolves against IS-train. The winning genome is
+  *selected by IS-validation* (early stopping / model selection), never by
+  train. OOS is touched exactly once, at the end, as a pass/fail gate.
+- **A deliberately tiny 5-knob search space** (tolerance, confirmation
+  window, min_reward_risk, stop_levels, target_levels). The high-leverage
+  regime lever (`pivot_period`) and the rationale-free surfaces (MACD
+  periods, cost assumptions, position size) and every structural flag are
+  FROZEN, not searched -- see the PARAM NOTES block in the script for the
+  full change/don't-change rationale. Overfitting capacity scales with
+  (#free params x their leverage x #configs tried); the GA maximises the
+  last term, so the defence is to shrink the first two.
+- **A robust R-multiple fitness** aggregated across pairs, with a hard
+  penalty for too few trades and a multiplier rewarding cross-pair
+  consistency, so a config can't win by overfitting one lucky pair or a
+  handful of outlier trades.
+
+Result on the 5 majors:
+
+| config | train rPF | val rPF | OOS rPF | OOS pairs+ | OOS trades |
+|---|---|---|---|---|---|
+| baseline (hand-tuned, round 3) | 1.197 | 1.109 | **1.124** | **4/5** | **873** |
+| GA best-on-validation (selected) | 1.296 | 1.574 | 1.062 | 3/5 | 85 |
+| GA best-on-train (overfit ref) | 1.609 | 0.833 | 1.484 | 3/5 | 41 |
+
+**Overfitting was caught in the act:** as the GA drove train rPF up (1.30
+-> 1.61 across generations), the same champion's validation rPF *fell*
+(1.57 -> 0.83, 5/5 pairs -> 1/5). That divergence is overfitting made
+visible before OOS is ever touched -- and selecting by validation instead
+of train is what stopped the overfit config from being shipped.
+
+**The GA found nothing that beats the hand-tuned baseline.** The
+train-optimal config's flashy "OOS rPF 1.484" is a mirage on 41 trades
+(the GA cranked min_reward_risk up, strangling trade count -- fewer trades
+is exactly how a lucky-looking backtest happens). The baseline wins where
+it matters: OOS rPF 1.124 on **873 trades across 4/5 pairs**, an order of
+magnitude more evidence than either GA config. More search power over the
+same knobs just produced in-sample mirages the OOS gate rejected.
+
+**Conclusion:** the strategy is at its parameter ceiling. A GA wrapped in
+a proper train/validation/OOS harness is an excellent overfitting
+*detector*, but it cannot manufacture edge that isn't in the data. Real
+improvement has to come from a new source -- pair selection, a different
+signal, a regime filter -- not from mining these five parameters harder.
